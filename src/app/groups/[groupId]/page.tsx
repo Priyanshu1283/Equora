@@ -1,8 +1,7 @@
 "use client";
 
-import React, { useEffect, useState, use } from "react";
+import React, { useEffect, useState, use, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { Navbar } from "@/components/layout/Navbar";
 import { ExpenseModal } from "@/components/expenses/ExpenseModal";
 import { SettlementModal } from "@/components/balances/SettlementModal";
@@ -11,24 +10,14 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { formatPaiseToINR, getInitials } from "@/lib/utils";
 import {
-  Wallet,
-  Users,
   PlusCircle,
-  ArrowRight,
-  ArrowDownLeft,
-  ArrowUpRight,
-  Receipt,
   UserPlus,
   HandCoins,
-  BarChart3,
   ListFilter,
   CheckCircle2,
   Trash2,
   Edit2,
-  Shield,
   LogOut,
-  Calendar,
-  Layers,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -93,15 +82,12 @@ export default function GroupDashboardPage({ params }: GroupPageProps) {
 
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
 
-  // Load all group details
-  const loadGroupDetails = async () => {
+  // Fast primary loader: only loads group info + balances
+  const loadEssentialData = useCallback(async () => {
     try {
-      const [grpRes, balRes, expRes, setRes, repRes] = await Promise.all([
+      const [grpRes, balRes] = await Promise.all([
         fetch(`/api/groups/${groupId}`),
         fetch(`/api/groups/${groupId}/balances`),
-        fetch(`/api/groups/${groupId}/expenses`),
-        fetch(`/api/groups/${groupId}/settlements`),
-        fetch(`/api/groups/${groupId}/reports`),
       ]);
 
       if (grpRes.status === 401 || grpRes.status === 403) {
@@ -109,26 +95,52 @@ export default function GroupDashboardPage({ params }: GroupPageProps) {
         return;
       }
 
-      const [grpJson, balJson, expJson, setJson, repJson] = await Promise.all([
+      const [grpJson, balJson] = await Promise.all([
         grpRes.json(),
         balRes.json(),
-        expRes.json(),
-        setRes.json(),
-        repRes.json(),
       ]);
 
       setGroupData(grpJson);
       setBalanceData(balJson);
-      setExpenses(expJson.expenses || []);
-      setSettlements(setJson.settlements || []);
-      setReports(repJson);
     } catch (err) {
-      console.error("Error loading group dashboard:", err);
+      console.error("Error loading group:", err);
     } finally {
       setLoading(false);
     }
-  };
+  }, [groupId, router]);
 
+  // Lazy tab data loaders
+  const loadExpenses = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/groups/${groupId}/expenses`);
+      const json = await res.json();
+      setExpenses(json.expenses || []);
+    } catch (err) {
+      console.error(err);
+    }
+  }, [groupId]);
+
+  const loadSettlements = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/groups/${groupId}/settlements`);
+      const json = await res.json();
+      setSettlements(json.settlements || []);
+    } catch (err) {
+      console.error(err);
+    }
+  }, [groupId]);
+
+  const loadReports = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/groups/${groupId}/reports`);
+      const json = await res.json();
+      setReports(json);
+    } catch (err) {
+      console.error(err);
+    }
+  }, [groupId]);
+
+  // Initial load
   useEffect(() => {
     fetch("/api/auth/session")
       .then((res) => res.json())
@@ -137,11 +149,28 @@ export default function GroupDashboardPage({ params }: GroupPageProps) {
           router.push("/login");
         } else {
           setCurrentUser(session.user);
-          loadGroupDetails();
+          loadEssentialData();
+          loadExpenses(); // Background prefetch
         }
       })
       .catch(() => router.push("/login"));
-  }, [groupId, router]);
+  }, [groupId, router, loadEssentialData, loadExpenses]);
+
+  // Trigger tab-specific loads
+  useEffect(() => {
+    if (activeTab === "settlements" && settlements.length === 0) {
+      loadSettlements();
+    } else if (activeTab === "analytics" && !reports) {
+      loadReports();
+    }
+  }, [activeTab, settlements.length, reports, loadSettlements, loadReports]);
+
+  const refreshAll = () => {
+    loadEssentialData();
+    loadExpenses();
+    if (activeTab === "settlements") loadSettlements();
+    if (activeTab === "analytics") loadReports();
+  };
 
   const handleDeleteExpense = async (expenseId: string) => {
     if (!confirm("Are you sure you want to delete this expense?")) return;
@@ -150,7 +179,7 @@ export default function GroupDashboardPage({ params }: GroupPageProps) {
         method: "DELETE",
       });
       if (res.ok) {
-        loadGroupDetails();
+        refreshAll();
       }
     } catch (err) {
       console.error(err);
@@ -158,7 +187,6 @@ export default function GroupDashboardPage({ params }: GroupPageProps) {
   };
 
   const handleLeaveGroup = async () => {
-    // Check user net balance
     const userSummary = balanceData?.members?.find(
       (m: any) => m.userId === currentUser?.id
     );
@@ -210,7 +238,6 @@ export default function GroupDashboardPage({ params }: GroupPageProps) {
   const memberSummaries = balanceData?.members || [];
   const suggestedSettlements = balanceData?.suggestedSettlements || [];
 
-  // Filter expenses
   const filteredExpenses = expenses.filter((e) => {
     if (selectedCategory !== "ALL" && e.category !== selectedCategory) return false;
     if (selectedMember && e.paidBy?._id !== selectedMember) return false;
@@ -250,7 +277,6 @@ export default function GroupDashboardPage({ params }: GroupPageProps) {
             </div>
           </div>
 
-          {/* Action Buttons */}
           <div className="flex flex-wrap items-center gap-2">
             <Button
               variant="outline"
@@ -314,7 +340,6 @@ export default function GroupDashboardPage({ params }: GroupPageProps) {
         {/* TAB 1: OVERVIEW & BALANCES */}
         {activeTab === "overview" && (
           <div className="space-y-6">
-            {/* Suggested Minimal Settlements Card */}
             <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs space-y-4">
               <div className="flex items-center justify-between">
                 <div>
@@ -378,7 +403,6 @@ export default function GroupDashboardPage({ params }: GroupPageProps) {
               )}
             </div>
 
-            {/* Member-Wise Financial Summary Table */}
             <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs space-y-4">
               <div>
                 <h3 className="text-base font-bold text-slate-900">
@@ -472,7 +496,6 @@ export default function GroupDashboardPage({ params }: GroupPageProps) {
         {/* TAB 2: EXPENSES */}
         {activeTab === "expenses" && (
           <div className="space-y-4">
-            {/* Filters Bar */}
             <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white p-3.5 rounded-xl border border-slate-200">
               <div className="flex items-center gap-2 w-full sm:w-auto">
                 <ListFilter className="h-4 w-4 text-slate-400" />
@@ -521,7 +544,6 @@ export default function GroupDashboardPage({ params }: GroupPageProps) {
               </Button>
             </div>
 
-            {/* Expenses List */}
             {filteredExpenses.length === 0 ? (
               <div className="rounded-2xl border border-slate-200 bg-white p-12 text-center text-xs text-slate-500">
                 No expenses match the selected filters.
@@ -550,7 +572,6 @@ export default function GroupDashboardPage({ params }: GroupPageProps) {
                         })}
                       </p>
 
-                      {/* Participant Splits Pills */}
                       <div className="flex flex-wrap gap-1.5 pt-1">
                         {exp.splits?.map((s: any) => (
                           <span
@@ -609,12 +630,11 @@ export default function GroupDashboardPage({ params }: GroupPageProps) {
         {/* TAB 3: ANALYTICS & REPORTS */}
         {activeTab === "analytics" && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Category Breakdown (Pie Chart) */}
             <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs space-y-4">
               <h3 className="text-base font-bold text-slate-900">
                 Category Breakdown
               </h3>
-              {reports?.categoryBreakdown?.length === 0 ? (
+              {!reports || reports.categoryBreakdown?.length === 0 ? (
                 <p className="text-xs text-slate-400">No expense data yet.</p>
               ) : (
                 <div className="h-64 w-full">
@@ -647,12 +667,11 @@ export default function GroupDashboardPage({ params }: GroupPageProps) {
               )}
             </div>
 
-            {/* Monthly Spending Trend (Bar Chart) */}
             <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs space-y-4">
               <h3 className="text-base font-bold text-slate-900">
                 Monthly Spending Trend
               </h3>
-              {reports?.monthlyTrends?.length === 0 ? (
+              {!reports || reports.monthlyTrends?.length === 0 ? (
                 <p className="text-xs text-slate-400">No monthly trends yet.</p>
               ) : (
                 <div className="h-64 w-full">
@@ -791,7 +810,6 @@ export default function GroupDashboardPage({ params }: GroupPageProps) {
               </div>
             </div>
 
-            {/* Safeguard: Leave Group Card */}
             <div className="rounded-2xl border border-rose-100 bg-rose-50/50 p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div>
                 <h4 className="text-sm font-bold text-rose-950">
@@ -811,14 +829,13 @@ export default function GroupDashboardPage({ params }: GroupPageProps) {
         )}
       </main>
 
-      {/* Modals */}
       <ExpenseModal
         isOpen={isExpenseModalOpen}
         onClose={() => setIsExpenseModalOpen(false)}
         groupId={groupId}
         members={members}
         currentUserId={currentUser?.id}
-        onSaved={loadGroupDetails}
+        onSaved={refreshAll}
         expenseToEdit={expenseToEdit}
       />
 
@@ -830,7 +847,7 @@ export default function GroupDashboardPage({ params }: GroupPageProps) {
         initialPayerId={settlementPrefill.payerId}
         initialReceiverId={settlementPrefill.receiverId}
         initialAmountPaise={settlementPrefill.amountPaise}
-        onSettled={loadGroupDetails}
+        onSettled={refreshAll}
       />
 
       <InviteModal
@@ -838,7 +855,7 @@ export default function GroupDashboardPage({ params }: GroupPageProps) {
         onClose={() => setIsInviteModalOpen(false)}
         groupId={groupId}
         groupName={group?.name || "Group"}
-        onInvited={loadGroupDetails}
+        onInvited={refreshAll}
       />
     </div>
   );

@@ -45,16 +45,18 @@ export async function GET(req: Request, { params }: RouteParams) {
       if (endDate) query.date.$lte = new Date(endDate);
     }
 
-    const expenses = await Expense.find(query)
-      .populate("paidBy", "name email image")
-      .populate("createdBy", "name email")
-      .sort({ date: -1, createdAt: -1 });
+    const gid = new mongoose.Types.ObjectId(groupId);
 
-    // Fetch splits for these expenses
-    const expenseIds = expenses.map((e) => e._id);
-    const allSplits = await ExpenseSplit.find({
-      expenseId: { $in: expenseIds },
-    }).populate("userId", "name email image");
+    const [expenses, allSplits] = await Promise.all([
+      Expense.find(query)
+        .populate("paidBy", "name email image")
+        .populate("createdBy", "name email")
+        .sort({ date: -1, createdAt: -1 })
+        .lean(),
+      ExpenseSplit.find({ groupId: gid })
+        .populate("userId", "name email image")
+        .lean(),
+    ]);
 
     // Group splits by expenseId
     const splitsByExpenseId: Record<string, any[]> = {};
@@ -64,7 +66,7 @@ export async function GET(req: Request, { params }: RouteParams) {
       splitsByExpenseId[eid].push(split);
     }
 
-    const enrichedExpenses = expenses.map((exp) => ({
+    const enrichedExpenses = expenses.map((exp: any) => ({
       _id: exp._id,
       title: exp.title,
       amountPaise: exp.amountPaise,
@@ -117,13 +119,11 @@ export async function POST(req: Request, { params }: RouteParams) {
       );
     }
 
-    // Calculate equal split shares using integer paise engine
     const splits = calculateEqualSplit(
       validatedData.amountPaise,
       validatedData.participantUserIds
     );
 
-    // Create Expense document
     const expense = await Expense.create({
       groupId: gid,
       title: validatedData.title,
@@ -136,7 +136,6 @@ export async function POST(req: Request, { params }: RouteParams) {
       createdBy: new mongoose.Types.ObjectId(user.id),
     });
 
-    // Create ExpenseSplit documents
     const splitDocs = splits.map((s) => ({
       expenseId: expense._id,
       groupId: gid,

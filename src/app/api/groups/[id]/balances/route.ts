@@ -30,18 +30,20 @@ export async function GET(req: Request, { params }: RouteParams) {
 
     const gid = new mongoose.Types.ObjectId(groupId);
 
-    // 1. Fetch all active members
-    const members = await GroupMember.find({
-      groupId: gid,
-      status: "ACTIVE",
-    }).populate("userId", "name email image");
+    // Parallel fetch using .lean() for high-performance sub-second response
+    const [members, expenses, splits, settlements] = await Promise.all([
+      GroupMember.find({
+        groupId: gid,
+        status: "ACTIVE",
+      })
+        .populate("userId", "name email image")
+        .lean(),
+      Expense.find({ groupId: gid }).lean(),
+      ExpenseSplit.find({ groupId: gid }).lean(),
+      Settlement.find({ groupId: gid, status: "CONFIRMED" }).lean(),
+    ]);
 
-    const memberUserIds = members.map((m) => (m.userId as any)._id.toString());
-
-    // 2. Fetch all expenses and their splits for cumulative balance (carry forward)
-    const expenses = await Expense.find({ groupId: gid });
-    const expenseIds = expenses.map((e) => e._id);
-    const splits = await ExpenseSplit.find({ expenseId: { $in: expenseIds } });
+    const memberUserIds = members.map((m: any) => m.userId?._id?.toString() || m.userId?.toString());
 
     // Group splits by expense
     const splitsMap: Record<string, Array<{ userId: string; sharePaise: number }>> = {};
@@ -62,8 +64,6 @@ export async function GET(req: Request, { params }: RouteParams) {
       date: e.date,
     }));
 
-    // 3. Fetch all settlements
-    const settlements = await Settlement.find({ groupId: gid, status: "CONFIRMED" });
     const settlementRecords: SettlementRecord[] = settlements.map((s) => ({
       _id: s._id.toString(),
       paidBy: s.paidBy.toString(),
@@ -73,25 +73,25 @@ export async function GET(req: Request, { params }: RouteParams) {
       status: s.status,
     }));
 
-    // 4. Calculate cumulative balances
+    // Calculate balances & minimal settlement suggestions
     const balancesMap = calculateGroupBalances(
       memberUserIds,
       expenseRecords,
       settlementRecords
     );
 
-    // 5. Calculate suggested minimal settlement instructions
     const suggestedSettlements = calculateSuggestedSettlements(balancesMap);
 
-    // 6. Enrich with member user profile data
+    // Enrich with member user profile data
     const memberProfileMap = new Map<string, any>();
-    for (const m of members) {
-      const u = m.userId as any;
-      memberProfileMap.set(u._id.toString(), {
-        name: u.name,
-        email: u.email,
-        image: u.image,
-        role: m.role,
+    for (const m of members as any[]) {
+      const u = m.userId || {};
+      const uid = u._id ? u._id.toString() : u.toString();
+      memberProfileMap.set(uid, {
+        name: u.name || "Member",
+        email: u.email || "",
+        image: u.image || "",
+        role: m.role || "MEMBER",
       });
     }
 
@@ -106,7 +106,6 @@ export async function GET(req: Request, { params }: RouteParams) {
       };
     });
 
-    // Enrich suggested settlements with user details
     const enrichedSuggestions = suggestedSettlements.map((s) => ({
       ...s,
       fromUser: memberProfileMap.get(s.fromUserId) || { name: "Member" },

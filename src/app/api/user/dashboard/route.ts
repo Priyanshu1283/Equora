@@ -27,7 +27,9 @@ export async function GET() {
     const memberships = await GroupMember.find({
       userId: uid,
       status: "ACTIVE",
-    }).populate("groupId", "name groupType currency");
+    })
+      .populate("groupId", "name groupType currency")
+      .lean();
 
     const joinedGroups = memberships
       .filter((m) => m.groupId != null)
@@ -35,7 +37,86 @@ export async function GET() {
 
     const groupIds = joinedGroups.map((g) => g._id);
 
-    // 2. Compute group-wise balances
+    if (groupIds.length === 0) {
+      return NextResponse.json({
+        summary: {
+          totalJoinedGroups: 0,
+          overallTotalPaidPaise: 0,
+          overallTotalSharePaise: 0,
+          overallAmountToReceivePaise: 0,
+          overallAmountToPayPaise: 0,
+          netBalancePaise: 0,
+        },
+        groupBalances: [],
+        recentExpenses: [],
+      });
+    }
+
+    // 2. Fetch all data in PARALLEL using .lean() for maximum speed
+    const [allMembers, allExpenses, allSplits, allSettlements, recentExpenses] =
+      await Promise.all([
+        GroupMember.find({
+          groupId: { $in: groupIds },
+          status: "ACTIVE",
+        }).lean(),
+        Expense.find({ groupId: { $in: groupIds } }).lean(),
+        ExpenseSplit.find({ groupId: { $in: groupIds } }).lean(),
+        Settlement.find({
+          groupId: { $in: groupIds },
+          status: "CONFIRMED",
+        }).lean(),
+        Expense.find({ groupId: { $in: groupIds } })
+          .populate("groupId", "name")
+          .populate("paidBy", "name email image")
+          .sort({ date: -1, createdAt: -1 })
+          .limit(10)
+          .lean(),
+      ]);
+
+    // 3. Index data in memory for O(1) access
+    const membersByGroup: Record<string, string[]> = {};
+    for (const m of allMembers) {
+      const gid = m.groupId.toString();
+      if (!membersByGroup[gid]) membersByGroup[gid] = [];
+      membersByGroup[gid].push(m.userId.toString());
+    }
+
+    const splitsByExpense: Record<string, Array<{ userId: string; sharePaise: number }>> = {};
+    for (const s of allSplits) {
+      const eid = s.expenseId.toString();
+      if (!splitsByExpense[eid]) splitsByExpense[eid] = [];
+      splitsByExpense[eid].push({
+        userId: s.userId.toString(),
+        sharePaise: s.sharePaise,
+      });
+    }
+
+    const expensesByGroup: Record<string, ExpenseRecord[]> = {};
+    for (const e of allExpenses) {
+      const gid = e.groupId.toString();
+      if (!expensesByGroup[gid]) expensesByGroup[gid] = [];
+      expensesByGroup[gid].push({
+        _id: e._id.toString(),
+        paidBy: e.paidBy.toString(),
+        amountPaise: e.amountPaise,
+        splits: splitsByExpense[e._id.toString()] || [],
+      });
+    }
+
+    const settlementsByGroup: Record<string, SettlementRecord[]> = {};
+    for (const s of allSettlements) {
+      const gid = s.groupId.toString();
+      if (!settlementsByGroup[gid]) settlementsByGroup[gid] = [];
+      settlementsByGroup[gid].push({
+        _id: s._id.toString(),
+        paidBy: s.paidBy.toString(),
+        paidTo: s.paidTo.toString(),
+        amountPaise: s.amountPaise,
+        status: s.status,
+      });
+    }
+
+    // 4. Compute balances in-memory
     const groupBalances: Array<{
       groupId: string;
       groupName: string;
@@ -53,56 +134,12 @@ export async function GET() {
     let overallAmountToPayPaise = 0;
 
     for (const group of joinedGroups) {
-      const gid = group._id;
+      const gidStr = group._id.toString();
+      const memberIds = membersByGroup[gidStr] || [];
+      const expList = expensesByGroup[gidStr] || [];
+      const setList = settlementsByGroup[gidStr] || [];
 
-      // Group members
-      const grpMembers = await GroupMember.find({
-        groupId: gid,
-        status: "ACTIVE",
-      });
-      const memberIds = grpMembers.map((m) => m.userId.toString());
-
-      // Group expenses & splits
-      const grpExpenses = await Expense.find({ groupId: gid });
-      const expIds = grpExpenses.map((e) => e._id);
-      const grpSplits = await ExpenseSplit.find({ expenseId: { $in: expIds } });
-
-      const splitsMap: Record<string, Array<{ userId: string; sharePaise: number }>> = {};
-      for (const s of grpSplits) {
-        const eid = s.expenseId.toString();
-        if (!splitsMap[eid]) splitsMap[eid] = [];
-        splitsMap[eid].push({
-          userId: s.userId.toString(),
-          sharePaise: s.sharePaise,
-        });
-      }
-
-      const expenseRecords: ExpenseRecord[] = grpExpenses.map((e) => ({
-        _id: e._id.toString(),
-        paidBy: e.paidBy.toString(),
-        amountPaise: e.amountPaise,
-        splits: splitsMap[e._id.toString()] || [],
-      }));
-
-      // Group settlements
-      const grpSettlements = await Settlement.find({
-        groupId: gid,
-        status: "CONFIRMED",
-      });
-      const settlementRecords: SettlementRecord[] = grpSettlements.map((s) => ({
-        _id: s._id.toString(),
-        paidBy: s.paidBy.toString(),
-        paidTo: s.paidTo.toString(),
-        amountPaise: s.amountPaise,
-        status: s.status,
-      }));
-
-      const balances = calculateGroupBalances(
-        memberIds,
-        expenseRecords,
-        settlementRecords
-      );
-
+      const balances = calculateGroupBalances(memberIds, expList, setList);
       const userSummary = balances.get(uidStr) || {
         userId: uidStr,
         totalPaidPaise: 0,
@@ -118,7 +155,7 @@ export async function GET() {
       overallAmountToPayPaise += userSummary.amountToPayPaise;
 
       groupBalances.push({
-        groupId: gid.toString(),
+        groupId: gidStr,
         groupName: group.name,
         groupType: group.groupType,
         totalPaidPaise: userSummary.totalPaidPaise,
@@ -128,15 +165,6 @@ export async function GET() {
         amountToPayPaise: userSummary.amountToPayPaise,
       });
     }
-
-    // 3. Fetch recent expenses across user's groups
-    const recentExpenses = await Expense.find({
-      groupId: { $in: groupIds },
-    })
-      .populate("groupId", "name")
-      .populate("paidBy", "name email image")
-      .sort({ date: -1, createdAt: -1 })
-      .limit(10);
 
     return NextResponse.json({
       summary: {
