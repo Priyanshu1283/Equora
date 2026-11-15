@@ -1,6 +1,7 @@
 import NextAuth, { type DefaultSession } from "next-auth";
 import Google from "next-auth/providers/google";
 import Credentials from "next-auth/providers/credentials";
+import { compare } from "bcryptjs";
 import { connectToDatabase } from "@/lib/db/connect";
 import { User } from "@/lib/models/User";
 
@@ -24,42 +25,38 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
   );
 }
 
-// Dev Mode Credentials Provider (allows 1-click test user login for Rahul, Priyanshu, Amit)
-if (process.env.ALLOW_DEV_LOGIN !== "false") {
-  providers.push(
-    Credentials({
-      id: "dev-login",
-      name: "Demo Account",
-      credentials: {
-        email: { label: "Email", type: "email" },
-        name: { label: "Name", type: "text" },
-      },
-      async authorize(credentials) {
-        if (!credentials?.email) return null;
+providers.push(
+  Credentials({
+    id: "credentials",
+    name: "Email and password",
+    credentials: {
+      email: { label: "Email", type: "email" },
+      password: { label: "Password", type: "password" },
+    },
+    async authorize(credentials) {
+      if (
+        typeof credentials?.email !== "string" ||
+        typeof credentials.password !== "string"
+      ) {
+        return null;
+      }
 
-        await connectToDatabase();
-        const email = (credentials.email as string).toLowerCase().trim();
-        const name = (credentials.name as string) || email.split("@")[0];
+      await connectToDatabase();
+      const email = credentials.email.toLowerCase().trim();
+      const user = await User.findOne({ email }).select("+passwordHash");
+      if (!user?.passwordHash || !(await compare(credentials.password, user.passwordHash))) {
+        return null;
+      }
 
-        let user = await User.findOne({ email });
-        if (!user) {
-          user = await User.create({
-            email,
-            name,
-            image: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(name)}`,
-            defaultCurrency: "INR",
-          });
-        }
-        return {
-          id: user._id.toString(),
-          name: user.name,
-          email: user.email,
-          image: user.image,
-        };
-      },
-    })
-  );
-}
+      return {
+        id: user._id.toString(),
+        name: user.name,
+        email: user.email,
+        image: user.image,
+      };
+    },
+  })
+);
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   providers,

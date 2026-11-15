@@ -1,47 +1,116 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
-import { Wallet, ShieldCheck, ArrowRight, UserCircle2 } from "lucide-react";
+import { Wallet, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/Button";
-
-const demoUsers = [
-  { name: "Rahul Sharma", email: "rahul@demo.com", role: "Flatmate 1" },
-  { name: "Priyanshu Verma", email: "priyanshu@demo.com", role: "Flatmate 2" },
-  { name: "Amit Kumar", email: "amit@demo.com", role: "Flatmate 3" },
-];
+import { Input } from "@/components/ui/Input";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [customEmail, setCustomEmail] = useState("");
-  const [customName, setCustomName] = useState("");
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [loadingUser, setLoadingUser] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  const [googleEnabled, setGoogleEnabled] = useState(false);
 
-  const handleDevLogin = async (email: string, name?: string) => {
-    setLoadingUser(email);
+  useEffect(() => {
+    const invitedEmail = new URLSearchParams(window.location.search).get("email");
+    if (invitedEmail) setEmail(invitedEmail);
+
+    fetch("/api/auth/providers")
+      .then((response) => response.json())
+      .then((providers) => setGoogleEnabled(Boolean(providers.google)))
+      .catch((providerError) => {
+        console.error("Unable to load sign-in providers:", providerError);
+      });
+  }, []);
+
+  const getReturnPath = () => {
+    const callbackUrl = new URLSearchParams(window.location.search).get("callbackUrl");
+    if (!callbackUrl) return "/dashboard";
+
     try {
-      const res = await signIn("dev-login", {
+      const callback = new URL(callbackUrl, window.location.origin);
+      if (callback.origin === window.location.origin) {
+        return `${callback.pathname}${callback.search}${callback.hash}`;
+      }
+    } catch {
+      return "/dashboard";
+    }
+
+    return "/dashboard";
+  };
+
+  const handleCredentialsSubmit = async (
+    event: React.FormEvent<HTMLFormElement>
+  ) => {
+    event.preventDefault();
+    setLoadingUser("credentials");
+    setError("");
+
+    try {
+      if (isRegistering) {
+        const response = await fetch("/api/auth/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, email, password }),
+        });
+        const data = await response.json();
+
+        if (!response.ok) {
+          setError(data.error || "Unable to create your account.");
+          return;
+        }
+      }
+
+      const result = await signIn("credentials", {
         email,
-        name: name || email.split("@")[0],
+        password,
         redirect: false,
       });
 
-      if (res?.ok) {
-        router.push("/dashboard");
-        router.refresh();
-      } else {
-        alert("Failed to sign in");
+      if (!result?.ok || result.error) {
+        if (isRegistering) {
+          setError(
+            "Your account was created, but sign-in failed. Please sign in with your new credentials."
+          );
+        } else if (
+          result?.code === "credentials" ||
+          result?.error === "CredentialsSignin"
+        ) {
+          setError("Email or password is incorrect. Please check and try again.");
+        } else {
+          setError("Unable to sign in right now. Please try again.");
+        }
+        if (isRegistering) setIsRegistering(false);
+        return;
       }
+
+      const sessionResponse = await fetch("/api/auth/session", {
+        cache: "no-store",
+      });
+      const session = await sessionResponse.json();
+      if (!session?.user?.id) {
+        setError("Sign-in could not be completed. Please try again.");
+        return;
+      }
+
+      router.replace(getReturnPath());
+      router.refresh();
     } catch (err) {
-      console.error(err);
+      console.error("Credential sign-in failed:", err);
+      setError("Unable to continue right now. Please try again.");
     } finally {
       setLoadingUser(null);
     }
   };
 
   const handleGoogleLogin = () => {
-    signIn("google", { callbackUrl: "/dashboard" });
+    signIn("google", { redirectTo: getReturnPath() });
   };
 
   return (
@@ -62,11 +131,11 @@ export default function LoginPage() {
 
         {/* Main Card */}
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-5">
-          {/* Google Sign In */}
-          <button
-            onClick={handleGoogleLogin}
-            className="w-full flex items-center justify-center gap-3 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-xs hover:bg-slate-50 hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-1 transition-all"
-          >
+          {googleEnabled && (
+            <button
+              onClick={handleGoogleLogin}
+              className="w-full flex items-center justify-center gap-3 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-xs hover:bg-slate-50 hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-1 transition-all"
+            >
             <svg className="h-5 w-5" viewBox="0 0 24 24">
               <path
                 fill="#4285F4"
@@ -85,80 +154,91 @@ export default function LoginPage() {
                 d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
               />
             </svg>
-            Continue with Google
-          </button>
+              Continue with Google
+            </button>
+          )}
 
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-slate-200" />
+          {googleEnabled && (
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-slate-200" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-white px-3 font-semibold text-slate-400">
+                  Or use your email and password
+                </span>
+              </div>
             </div>
-            <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-white px-3 font-semibold text-slate-400">
-                Or Fast-Test with Demo Profiles
-              </span>
-            </div>
-          </div>
+          )}
 
-          {/* Quick Demo Profiles */}
-          <div className="space-y-2">
-            {demoUsers.map((u) => (
-              <button
-                key={u.email}
-                type="button"
-                disabled={loadingUser !== null}
-                onClick={() => handleDevLogin(u.email, u.name)}
-                className="w-full flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50/60 p-3 text-left hover:border-slate-300 hover:bg-slate-100 transition-all group"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-900 text-xs font-bold text-white">
-                    {u.name.slice(0, 1)}
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold text-slate-900 group-hover:text-slate-950">
-                      {u.name}
-                    </p>
-                    <p className="text-[11px] text-slate-500">{u.email}</p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-1.5 text-xs font-medium text-slate-500 group-hover:text-slate-900">
-                  <span>Sign In</span>
-                  <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
-                </div>
-              </button>
-            ))}
-          </div>
-
-          {/* Custom Dev Sign In */}
-          <div className="pt-2 border-t border-slate-100 space-y-2.5">
-            <span className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
-              Or Any Custom Name / Email
-            </span>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                placeholder="Name"
-                value={customName}
-                onChange={(e) => setCustomName(e.target.value)}
-                className="w-1/2 rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900"
-              />
-              <input
+          <div className="border-t border-slate-100 pt-4">
+            <h2 className="mb-3 text-sm font-semibold text-slate-800">
+              {isRegistering ? "Create your account" : "Sign in with email"}
+            </h2>
+            <form onSubmit={handleCredentialsSubmit} className="space-y-3">
+              {isRegistering && (
+                <Input
+                  label="Name"
+                  name="name"
+                  autoComplete="name"
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  minLength={2}
+                  maxLength={80}
+                  required
+                />
+              )}
+              <Input
+                label="Email"
+                name="email"
                 type="email"
-                placeholder="Email"
-                value={customEmail}
-                onChange={(e) => setCustomEmail(e.target.value)}
-                className="w-1/2 rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900"
+                autoComplete="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                maxLength={254}
+                required
               />
-            </div>
-            <Button
-              size="sm"
-              variant="outline"
-              className="w-full"
-              disabled={!customEmail.trim() || loadingUser !== null}
-              onClick={() => handleDevLogin(customEmail, customName)}
-            >
-              Enter as Custom User
-            </Button>
+              <Input
+                label="Password"
+                name="password"
+                type="password"
+                autoComplete={isRegistering ? "new-password" : "current-password"}
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                minLength={isRegistering ? 8 : undefined}
+                maxLength={72}
+                required
+              />
+              {error && (
+                <p role="alert" className="text-sm text-rose-600">
+                  {error}
+                </p>
+              )}
+              <Button
+                type="submit"
+                className="w-full"
+                disabled={loadingUser !== null}
+              >
+                {loadingUser === "credentials"
+                  ? "Please wait..."
+                  : isRegistering
+                    ? "Create account"
+                    : "Sign in"}
+              </Button>
+            </form>
+            <p className="mt-3 text-center text-xs text-slate-500">
+              {isRegistering ? "Already have an account?" : "New to Equora?"}{" "}
+              <button
+                type="button"
+                className="font-semibold text-slate-900 hover:underline"
+                onClick={() => {
+                  setIsRegistering((current) => !current);
+                  setError("");
+                }}
+              >
+                {isRegistering ? "Sign in" : "Create an account"}
+              </button>
+            </p>
           </div>
         </div>
 

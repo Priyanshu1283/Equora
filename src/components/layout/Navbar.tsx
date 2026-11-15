@@ -2,7 +2,8 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { signOut } from "next-auth/react";
 import {
   Wallet,
   Users,
@@ -27,7 +28,28 @@ interface NavbarProps {
 
 export function Navbar({ user, onOpenCreateGroup }: NavbarProps) {
   const pathname = usePathname();
+  const router = useRouter();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState("");
+
+  const handleSignOut = async () => {
+    setIsSigningOut(true);
+    setSignOutError("");
+
+    try {
+      await signOut({
+        redirect: false,
+        redirectTo: `${window.location.origin}/login`,
+      });
+      router.replace("/login");
+      router.refresh();
+    } catch (error) {
+      console.error("Error signing out:", error);
+      setSignOutError("Could not sign out. Please try again.");
+      setIsSigningOut(false);
+    }
+  };
 
   const navItems = [
     { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
@@ -113,18 +135,27 @@ export function Navbar({ user, onOpenCreateGroup }: NavbarProps) {
                 </div>
               </div>
 
-              <Link
-                href="/api/auth/signout"
+              <button
+                type="button"
+                onClick={handleSignOut}
+                disabled={isSigningOut}
                 className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors"
                 title="Sign out"
+                aria-label="Sign out"
               >
-                <LogOut className="h-4 w-4" />
-              </Link>
+                <LogOut className={`h-4 w-4 ${isSigningOut ? "animate-pulse" : ""}`} />
+              </button>
             </div>
           ) : (
             <Link href="/login">
               <Button size="sm">Sign In</Button>
             </Link>
+          )}
+
+          {signOutError && (
+            <p role="alert" className="text-xs text-rose-600">
+              {signOutError}
+            </p>
           )}
 
           {/* Mobile hamburger */}

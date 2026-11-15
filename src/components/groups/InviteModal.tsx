@@ -25,6 +25,7 @@ export function InviteModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [inviteLink, setInviteLink] = useState("");
+  const [emailSent, setEmailSent] = useState<boolean | null>(null);
   const [copied, setCopied] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -51,6 +52,7 @@ export function InviteModal({
 
       const fullLink = `${window.location.origin}${data.inviteLink}`;
       setInviteLink(fullLink);
+      setEmailSent(data.emailSent === true);
       setEmail("");
       if (onInvited) onInvited();
     } catch (err: any) {
@@ -70,6 +72,7 @@ export function InviteModal({
 
   const handleClose = () => {
     setInviteLink("");
+    setEmailSent(null);
     setError("");
     setEmail("");
     onClose();
@@ -114,11 +117,12 @@ export function InviteModal({
           <div className="space-y-3">
             <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-4 text-emerald-950">
               <p className="text-xs font-semibold uppercase tracking-wider text-emerald-800">
-                Invitation Created!
+                {emailSent ? "Invitation emailed!" : "Invitation link ready"}
               </p>
               <p className="text-xs text-emerald-700 mt-1">
-                Share this direct link with your friend so they can join{" "}
-                <strong>{groupName}</strong>:
+                {emailSent
+                  ? `An invitation email was sent. You can also share this link to join ${groupName}:`
+                  : `Email delivery is not configured or failed. Share this link directly to join ${groupName}:`}
               </p>
 
               <div className="mt-3 flex items-center gap-2">

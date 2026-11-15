@@ -3,7 +3,8 @@
 import React, { useEffect, useState, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { Wallet, Users, ArrowRight, CheckCircle2, AlertCircle } from "lucide-react";
+import { signOut } from "next-auth/react";
+import { Wallet, Users, ArrowRight, CheckCircle2, AlertCircle, LogIn } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 
 function JoinGroupContent() {
@@ -16,6 +17,7 @@ function JoinGroupContent() {
   const [joining, setJoining] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
+  const [needsAccountSwitch, setNeedsAccountSwitch] = useState(false);
 
   useEffect(() => {
     if (!token) {
@@ -50,8 +52,17 @@ function JoinGroupContent() {
       const data = await res.json();
       if (!res.ok) {
         if (res.status === 401) {
-          router.push(`/login?callbackUrl=/join?token=${token}`);
+          const callbackUrl = `/join?token=${encodeURIComponent(token)}`;
+          const loginUrl = new URLSearchParams({
+            callbackUrl,
+            ...(invitation?.email ? { email: invitation.email } : {}),
+          });
+          router.push(`/login?${loginUrl.toString()}`);
           return;
+        }
+        if (res.status === 403) {
+          setNeedsAccountSwitch(true);
+          throw new Error(data.error || "Sign in with the invited email to continue.");
         }
         throw new Error(data.error || "Failed to join group");
       }
@@ -64,6 +75,18 @@ function JoinGroupContent() {
       setError(err.message || "Failed to join group.");
       setJoining(false);
     }
+  };
+
+  const handleSwitchAccount = async () => {
+    if (!token) return;
+    setJoining(true);
+    await signOut({ redirect: false });
+    const callbackUrl = `/join?token=${encodeURIComponent(token)}`;
+    const loginUrl = new URLSearchParams({
+      callbackUrl,
+      ...(invitation?.email ? { email: invitation.email } : {}),
+    });
+    router.replace(`/login?${loginUrl.toString()}`);
   };
 
   if (loading) {
@@ -134,6 +157,9 @@ function JoinGroupContent() {
               <div className="pt-2 text-xs text-slate-500">
                 Invited by: <strong>{invitation.invitedBy?.name}</strong>
               </div>
+              <div className="text-xs text-slate-500">
+                Invitation for: <strong>{invitation.email}</strong>
+              </div>
             </div>
 
             <Button
@@ -142,9 +168,21 @@ function JoinGroupContent() {
               isLoading={joining}
               onClick={handleJoin}
             >
-              Accept & Join Group
+              Accept invitation
               <ArrowRight className="h-4 w-4 ml-1.5" />
             </Button>
+            {needsAccountSwitch && (
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                isLoading={joining}
+                onClick={handleSwitchAccount}
+              >
+                <LogIn className="h-4 w-4 mr-1.5" />
+                Sign in with the invited email
+              </Button>
+            )}
           </div>
         )}
 

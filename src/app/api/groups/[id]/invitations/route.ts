@@ -5,7 +5,7 @@ import { Invitation } from "@/lib/models/Invitation";
 import { GroupMember } from "@/lib/models/GroupMember";
 import { Group } from "@/lib/models/Group";
 import { User } from "@/lib/models/User";
-import { Notification } from "@/lib/models/Notification";
+import { notificationService } from "@/lib/notification.service";
 import { inviteMemberSchema } from "@/lib/validations";
 import { sendInvitationEmail } from "@/lib/email";
 import crypto from "crypto";
@@ -80,68 +80,66 @@ export async function POST(req: Request, { params }: RouteParams) {
       }
     }
 
-    // Check for existing pending invitation
-    const existingInvite = await Invitation.findOne({
+    let invitation = await Invitation.findOne({
       groupId: gid,
       email: normalizedEmail,
       status: "PENDING",
     });
 
-    if (existingInvite) {
-      return NextResponse.json(
-        { error: "A pending invitation already exists for this email." },
-        { status: 400 }
-      );
+    if (invitation && invitation.expiresAt <= new Date()) {
+      invitation.status = "EXPIRED";
+      await invitation.save();
+      invitation = null;
     }
 
-    // Create unique token
-    const token = crypto.randomBytes(24).toString("hex");
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7); // 7-day expiry
+    const isNewInvitation = !invitation;
+    if (!invitation) {
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + 7);
+      invitation = await Invitation.create({
+        groupId: gid,
+        email: normalizedEmail,
+        invitedBy: new mongoose.Types.ObjectId(user.id),
+        token: crypto.randomBytes(24).toString("hex"),
+        status: "PENDING",
+        expiresAt,
+      });
+    }
 
-    const invitation = await Invitation.create({
-      groupId: gid,
-      email: normalizedEmail,
-      invitedBy: new mongoose.Types.ObjectId(user.id),
-      token,
-      status: "PENDING",
-      expiresAt,
-    });
+    const inviteLink = new URL(
+      `/join?token=${invitation.token}`,
+      new URL(req.url).origin
+    ).toString();
 
-    const origin =
-      req.headers.get("origin") ||
-      process.env.NEXTAUTH_URL ||
-      "http://localhost:3000";
-
-    const inviteLink = `${origin}/join?token=${token}`;
-
-    // 1. Send real email using Nodemailer
-    await sendInvitationEmail({
+    const emailSent = await sendInvitationEmail({
       to: normalizedEmail,
       groupName: group.name,
       inviterName: user.name || "A friend",
       inviteLink,
     });
 
-    // 2. If user already has an account, also create an in-app Notification
     if (existingUser) {
-      await Notification.create({
-        userId: existingUser._id,
-        title: "New Group Invitation",
-        message: `${user.name || "A friend"} invited you to join "${group.name}".`,
-        type: "INVITATION",
-        link: `/join?token=${token}`,
-        isRead: false,
+      await notificationService.groupInvitation({
+        invitedUserId: existingUser._id.toString(),
+        groupId,
+        groupName: group.name,
+        inviterName: user.name || "A friend",
+        invitationToken: invitation.token,
       });
     }
 
     return NextResponse.json(
       {
         invitation,
-        inviteLink: `/join?token=${token}`,
-        message: "Invitation generated and email sent successfully.",
+        inviteLink: `/join?token=${invitation.token}`,
+        emailSent,
+        message: emailSent
+          ? isNewInvitation
+            ? "Invitation created and email sent."
+            : "Invitation email sent again."
+          : "Invitation created, but email could not be sent. Share the link directly.",
       },
-      { status: 201 }
+      { status: isNewInvitation ? 201 : 200 }
     );
   } catch (error: any) {
     return NextResponse.json(

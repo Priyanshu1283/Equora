@@ -3,7 +3,8 @@ import { getCurrentUser, requireGroupMember } from "@/lib/auth-helpers";
 import { connectToDatabase } from "@/lib/db/connect";
 import { Settlement } from "@/lib/models/Settlement";
 import { GroupMember } from "@/lib/models/GroupMember";
-import { Notification } from "@/lib/models/Notification";
+import { Group } from "@/lib/models/Group";
+import { notificationService } from "@/lib/notification.service";
 import { recordSettlementSchema } from "@/lib/validations";
 import { formatPaiseToINR } from "@/lib/utils";
 import mongoose from "mongoose";
@@ -95,15 +96,19 @@ export async function POST(req: Request, { params }: RouteParams) {
       .populate("paidBy", "name email image")
       .populate("paidTo", "name email image");
 
-    // Create in-app notification for the recipient
-    await Notification.create({
-      userId: new mongoose.Types.ObjectId(validatedData.paidTo),
-      title: "Payment Received",
-      message: `${populated.paidBy?.name || "A member"} settled ${formatPaiseToINR(validatedData.amountPaise)} with you.`,
-      type: "SETTLEMENT_RECORDED",
-      link: `/groups/${groupId}`,
-      isRead: false,
-    });
+    // Get group name for notification
+    const group = await Group.findById(gid).lean();
+    const groupName = (group as any)?.name || "your group";
+
+    // Real-time notification via Pusher + save in MongoDB
+    notificationService.settlementRecorded({
+      receiverId: validatedData.paidTo,
+      groupId,
+      groupName,
+      payerName: populated.paidBy?.name || "A member",
+      amountFormatted: formatPaiseToINR(validatedData.amountPaise),
+      settlementId: settlement._id.toString(),
+    }).catch((e) => console.error("[Settlement notif]", e));
 
     return NextResponse.json(
       {

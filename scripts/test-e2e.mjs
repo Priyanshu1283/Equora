@@ -2,56 +2,29 @@
  * End-to-End Live Workflow Verification Script
  */
 
-const BASE_URL = "http://localhost:3000";
-
-async function loginUser(email, name) {
-  // 1. Get CSRF Token and cookie
-  const csrfRes = await fetch(`${BASE_URL}/api/auth/csrf`);
-  const csrfData = await csrfRes.json();
-  const csrfCookies = csrfRes.headers.getSetCookie();
-  const csrfHeader = csrfCookies.map((c) => c.split(";")[0]).join("; ");
-
-  const params = new URLSearchParams();
-  params.append("email", email);
-  params.append("name", name);
-  params.append("csrfToken", csrfData.csrfToken);
-
-  // 2. Post credentials
-  const loginRes = await fetch(`${BASE_URL}/api/auth/callback/dev-login`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Cookie: csrfHeader,
-    },
-    body: params,
-    redirect: "manual",
-  });
-
-  const loginCookies = loginRes.headers.getSetCookie();
-  const sessionCookie = loginCookies.map((c) => c.split(";")[0]).join("; ");
-  return sessionCookie;
-}
+import { BASE_URL, getTestUsers, registerAndLogin } from "./auth-test-helper.mjs";
 
 async function runE2ETest() {
   console.log("==================================================");
   console.log("🚀 STARTING EQUORA END-TO-END WORKFLOW TEST");
   console.log("==================================================\n");
+  const [user1, user2] = getTestUsers();
 
-  // Step 1: Create / Authenticate Rahul
-  console.log("👉 Step 1: Authenticating User 1 (Rahul Sharma)...");
-  const rahulCookie = await loginUser("rahul@demo.com", "Rahul Sharma");
-  if (!rahulCookie) {
-    throw new Error("Failed to get session cookie for Rahul");
+  // Step 1: Create / authenticate the first test account
+  console.log("👉 Step 1: Creating or signing in as test user 1...");
+  const user1Cookie = await registerAndLogin(user1);
+  if (!user1Cookie) {
+    throw new Error("Failed to get session cookie for test user 1.");
   }
-  console.log("✅ Rahul Sharma authenticated successfully!\n");
+  console.log("✅ Test user 1 authenticated successfully!\n");
 
   // Step 2: Create Group "Goa Trip 2026"
-  console.log("👉 Step 2: Creating Group 'Goa Trip 2026' as Rahul...");
+  console.log("👉 Step 2: Creating Group 'Goa Trip 2026'...");
   const createGroupRes = await fetch(`${BASE_URL}/api/groups`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Cookie: rahulCookie,
+      Cookie: user1Cookie,
     },
     body: JSON.stringify({
       name: "Goa Trip 2026",
@@ -69,16 +42,16 @@ async function runE2ETest() {
   console.log(`✅ Group created successfully! Group ID: ${groupId}`);
   console.log(`   Name: ${groupData.group.name} | Type: ${groupData.group.groupType}\n`);
 
-  // Step 3: Invite Priyanshu
-  console.log("👉 Step 3: Inviting Priyanshu Verma (priyanshu@demo.com)...");
+  // Step 3: Invite test user 2
+  console.log("👉 Step 3: Inviting test user 2...");
   const inviteRes = await fetch(`${BASE_URL}/api/groups/${groupId}/invitations`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Cookie: rahulCookie,
+      Cookie: user1Cookie,
     },
     body: JSON.stringify({
-      email: "priyanshu@demo.com",
+      email: user2.email,
     }),
   });
 
@@ -87,26 +60,29 @@ async function runE2ETest() {
     throw new Error(`Failed to invite: ${JSON.stringify(inviteData)}`);
   }
   const token = inviteData.invitation.token;
-  console.log(`✅ Invitation created! Token: ${token}`);
+  console.log(`✅ Invitation created. Email sent: ${inviteData.emailSent}`);
   console.log(`   Invite Link: ${inviteData.inviteLink}\n`);
 
-  // Step 4: Authenticate Priyanshu and Accept Invitation
-  console.log("👉 Step 4: Authenticating Priyanshu and accepting invitation...");
-  const priyanshuCookie = await loginUser("priyanshu@demo.com", "Priyanshu Verma");
+  // Step 4: Authenticate test user 2 and accept the invitation
+  console.log("👉 Step 4: Authenticating test user 2 and accepting invitation...");
+  const user2Cookie = await registerAndLogin(user2);
 
   const acceptRes = await fetch(`${BASE_URL}/api/invitations/${token}`, {
     method: "POST",
     headers: {
-      Cookie: priyanshuCookie,
+      Cookie: user2Cookie,
     },
   });
   const acceptData = await acceptRes.json();
-  console.log(`✅ Priyanshu joined group: ${acceptData.message}\n`);
+  if (!acceptRes.ok) {
+    throw new Error(`Failed to accept invitation: ${JSON.stringify(acceptData)}`);
+  }
+  console.log(`✅ Test user 2 joined group: ${acceptData.message}\n`);
 
   // Step 5: Get Group Details and Members
   console.log("👉 Step 5: Fetching Group Members...");
   const membersRes = await fetch(`${BASE_URL}/api/groups/${groupId}`, {
-    headers: { Cookie: rahulCookie },
+    headers: { Cookie: user1Cookie },
   });
   const membersData = await membersRes.json();
   console.log(`✅ Group has ${membersData.members.length} members:`);
@@ -115,28 +91,28 @@ async function runE2ETest() {
   }
   console.log("");
 
-  const rahulMember = membersData.members.find((m) => m.user.email === "rahul@demo.com");
-  const priyanshuMember = membersData.members.find((m) => m.user.email === "priyanshu@demo.com");
+  const user1Member = membersData.members.find((m) => m.user.email === user1.email);
+  const user2Member = membersData.members.find((m) => m.user.email === user2.email);
 
-  const rahulId = rahulMember.user._id;
-  const priyanshuId = priyanshuMember.user._id;
+  const user1Id = user1Member.user._id;
+  const user2Id = user2Member.user._id;
 
   // Step 6: Add Shared Expense "Beach Resort Stay" = ₹3,000.00 (300,000 paise)
-  console.log("👉 Step 6: Rahul adds expense: 'Beach Resort Stay' (₹3,000.00) split equally between Rahul & Priyanshu...");
+  console.log("👉 Step 6: Test user 1 adds a shared resort expense...");
   const expenseRes = await fetch(`${BASE_URL}/api/groups/${groupId}/expenses`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Cookie: rahulCookie,
+      Cookie: user1Cookie,
     },
     body: JSON.stringify({
       title: "Beach Resort Stay",
       amountPaise: 300000, // ₹3,000.00
       category: "Accommodation",
-      paidBy: rahulId,
+      paidBy: user1Id,
       date: new Date().toISOString(),
       notes: "3 nights booking at Calangute",
-      participantUserIds: [rahulId, priyanshuId],
+      participantUserIds: [user1Id, user2Id],
     }),
   });
 
@@ -148,7 +124,7 @@ async function runE2ETest() {
   console.log(`   Total Amount: ₹${expenseData.expense.amountPaise / 100}.00`);
   console.log(`   Splits:`);
   for (const s of expenseData.splits) {
-    const memberName = s.userId === rahulId ? "Rahul" : "Priyanshu";
+    const memberName = s.userId === user1Id ? user1.name : user2.name;
     console.log(`     - ${memberName}: ₹${s.sharePaise / 100}.00`);
   }
   console.log("");
@@ -156,7 +132,7 @@ async function runE2ETest() {
   // Step 7: Check Balances & Suggested Settlements
   console.log("👉 Step 7: Fetching Balances & Minimal Settlement Instructions...");
   const balanceRes = await fetch(`${BASE_URL}/api/groups/${groupId}/balances`, {
-    headers: { Cookie: rahulCookie },
+    headers: { Cookie: user1Cookie },
   });
   const balanceData = await balanceRes.json();
 
@@ -173,17 +149,17 @@ async function runE2ETest() {
   }
   console.log("");
 
-  // Step 8: Priyanshu settles up with Rahul (Pays ₹1,500.00)
-  console.log("👉 Step 8: Priyanshu records settlement payment of ₹1,500.00 to Rahul...");
+  // Step 8: Test user 2 settles up with test user 1
+  console.log("👉 Step 8: Test user 2 records a settlement payment...");
   const settleRes = await fetch(`${BASE_URL}/api/groups/${groupId}/settlements`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Cookie: priyanshuCookie,
+      Cookie: user2Cookie,
     },
     body: JSON.stringify({
-      paidBy: priyanshuId,
-      paidTo: rahulId,
+      paidBy: user2Id,
+      paidTo: user1Id,
       amountPaise: 150000, // ₹1,500.00
       date: new Date().toISOString(),
       notes: "Paid via Google Pay UPI Ref #987654321",
@@ -199,7 +175,7 @@ async function runE2ETest() {
   // Step 9: Verify Balances after settlement (should be exactly ₹0.00 for both)
   console.log("👉 Step 9: Re-verifying Balances after settlement...");
   const postBalanceRes = await fetch(`${BASE_URL}/api/groups/${groupId}/balances`, {
-    headers: { Cookie: rahulCookie },
+    headers: { Cookie: user1Cookie },
   });
   const postBalanceData = await postBalanceRes.json();
 
@@ -213,7 +189,7 @@ async function runE2ETest() {
   // Step 10: Verify Analytics & Reports
   console.log("👉 Step 10: Fetching Analytics & Reports...");
   const reportsRes = await fetch(`${BASE_URL}/api/groups/${groupId}/reports`, {
-    headers: { Cookie: rahulCookie },
+    headers: { Cookie: user1Cookie },
   });
   const reportsData = await reportsRes.json();
   console.log("✅ Category Breakdown:");

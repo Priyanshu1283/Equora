@@ -52,9 +52,23 @@ NEXTAUTH_URL=http://localhost:3000
 GOOGLE_CLIENT_ID=your_google_client_id.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=your_google_client_secret
 
-# Dev Fallback Login (Allows instant 1-click test user profiles: Rahul, Priyanshu, Amit)
-ALLOW_DEV_LOGIN=true
+# SMTP (required for invitation emails; see .env.example)
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=your-email@gmail.com
+SMTP_PASS=your-app-password
+SMTP_FROM=Equora <your-email@gmail.com>
 ```
+
+Create an account with a name, email, and password, then use those same credentials
+to sign in after logging out. Passwords are stored as bcrypt hashes.
+
+To invite someone, a group admin enters their email. Equora sends a time-limited
+invitation link and also provides a link to share directly. The invitee creates an
+account or signs in with that exact email, returns to the invitation, and accepts
+it. Active group admins receive an in-app notification when they join. Configure
+SMTP above for email delivery; without it, the link is still available to share.
 
 ### 2. Run the Development Server
 
@@ -62,13 +76,19 @@ ALLOW_DEV_LOGIN=true
 pnpm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+Open the **Local** URL printed by Next.js. If port 3000 is already in use, Next.js
+will select another port, such as 3001.
 
 ### 3. Run Automated Tests
 
 ```bash
 pnpm test
 ```
+
+The live workflow scripts in `scripts/` use two real test accounts. Set
+`EQUORA_TEST_USER1_EMAIL`, `EQUORA_TEST_USER1_PASSWORD`,
+`EQUORA_TEST_USER2_EMAIL`, and `EQUORA_TEST_USER2_PASSWORD` in your shell, and
+set `EQUORA_TEST_URL` to the Local URL printed by Next.js before running them.
 
 ### 4. Build for Production
 
@@ -85,7 +105,7 @@ pnpm start
 Equora/
 ├── src/
 │   ├── app/                      # Next.js 15 App Router
-│   │   ├── (auth)/login/         # Login Page (Google + Demo profiles)
+│   │   ├── (auth)/login/         # Email/password account creation and sign-in
 │   │   ├── dashboard/            # Personal Financial Overview
 │   │   ├── groups/               # Groups Directory & Group Dashboard
 │   │   ├── join/                 # Group Invitation Join Portal

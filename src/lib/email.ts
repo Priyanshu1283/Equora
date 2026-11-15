@@ -46,6 +46,19 @@ function getTransporter() {
 
 const DEFAULT_FROM = process.env.SMTP_FROM || "Equora <noreply@equora.local>";
 
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (character) => {
+    const entities: Record<string, string> = {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    };
+    return entities[character];
+  });
+}
+
 /**
  * Sends a rich invitation email to a friend
  */
@@ -56,7 +69,14 @@ export async function sendInvitationEmail({
   inviteLink,
 }: SendInviteEmailParams): Promise<boolean> {
   const transporter = getTransporter();
+  if (!transporter) {
+    console.warn("[Invitation email] SMTP is not configured; email was not sent.");
+    return false;
+  }
 
+  const safeGroupName = escapeHtml(groupName);
+  const safeInviterName = escapeHtml(inviterName);
+  const safeInviteLink = escapeHtml(inviteLink);
   const htmlContent = `
     <!DOCTYPE html>
     <html>
@@ -79,17 +99,17 @@ export async function sendInvitationEmail({
         <div class="card">
           <div class="brand">⚖️ Equora</div>
           <div class="badge">Group Invitation</div>
-          <h2>Join "${groupName}" on Equora</h2>
+          <h2>Join "${safeGroupName}" on Equora</h2>
           <p>
-            <strong>${inviterName}</strong> has invited you to join the group <strong>"${groupName}"</strong> to easily share and split expenses with mathematical accuracy.
+            <strong>${safeInviterName}</strong> has invited you to join the group <strong>"${safeGroupName}"</strong> to easily share and split expenses with mathematical accuracy.
           </p>
           <div class="btn-container">
-            <a href="${inviteLink}" class="btn">Accept Invitation & Join Group</a>
+            <a href="${safeInviteLink}" class="btn">Accept Invitation & Join Group</a>
           </div>
           <p style="font-size: 12px; color: #64748b;">
             If the button above does not work, copy and paste this link into your browser:
           </p>
-          <div class="link-fallback">${inviteLink}</div>
+          <div class="link-fallback">${safeInviteLink}</div>
           <div class="footer">
             Equora – Production Group Expense Manager.<br>This invitation link expires in 7 days.
           </div>
@@ -97,14 +117,6 @@ export async function sendInvitationEmail({
       </body>
     </html>
   `;
-
-  if (!transporter) {
-    console.log("ℹ️ [Nodemailer Dev Fallback] SMTP is not configured in .env.local.");
-    console.log(`✉️ Simulated Email to: ${to}`);
-    console.log(`   Subject: ${inviterName} invited you to join "${groupName}" on Equora`);
-    console.log(`   Invite Link: ${inviteLink}\n`);
-    return true;
-  }
 
   try {
     await transporter.sendMail({

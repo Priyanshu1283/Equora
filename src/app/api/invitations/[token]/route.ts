@@ -4,6 +4,7 @@ import { connectToDatabase } from "@/lib/db/connect";
 import { Invitation } from "@/lib/models/Invitation";
 import { GroupMember } from "@/lib/models/GroupMember";
 import { Group } from "@/lib/models/Group";
+import { notificationService } from "@/lib/notification.service";
 import mongoose from "mongoose";
 
 interface RouteParams {
@@ -64,6 +65,17 @@ export async function POST(req: Request, { params }: RouteParams) {
       );
     }
 
+    const invitedEmail = invitation.email.toLowerCase().trim();
+    const signedInEmail = user.email?.toLowerCase().trim();
+    if (!signedInEmail || signedInEmail !== invitedEmail) {
+      return NextResponse.json(
+        {
+          error: `Sign in with ${invitedEmail} to accept this invitation.`,
+        },
+        { status: 403 }
+      );
+    }
+
     const userId = new mongoose.Types.ObjectId(user.id);
 
     // Check if already a member
@@ -72,15 +84,8 @@ export async function POST(req: Request, { params }: RouteParams) {
       userId,
     });
 
+    const wasAlreadyActive = existingMember?.status === "ACTIVE";
     if (existingMember) {
-      if (existingMember.status === "ACTIVE") {
-        invitation.status = "ACCEPTED";
-        await invitation.save();
-        return NextResponse.json({
-          message: "Already a member of this group",
-          groupId: invitation.groupId,
-        });
-      }
       existingMember.status = "ACTIVE";
       await existingMember.save();
     } else {
@@ -95,9 +100,37 @@ export async function POST(req: Request, { params }: RouteParams) {
     invitation.status = "ACCEPTED";
     await invitation.save();
 
+    // Notify group admin that invitation was accepted
+    const [group, adminMembers] = await Promise.all([
+      Group.findById(invitation.groupId).lean(),
+      GroupMember.find({
+        groupId: invitation.groupId,
+        role: "ADMIN",
+        status: "ACTIVE",
+      }),
+    ]);
+
+    if (group) {
+      await Promise.all(
+        adminMembers
+          .filter((admin) => admin.userId.toString() !== userId.toString())
+          .map((admin) =>
+            notificationService.invitationAccepted({
+              adminId: admin.userId.toString(),
+              groupId: invitation.groupId.toString(),
+              groupName: group.name,
+              acceptedByName: user.name || user.email || "Someone",
+              invitationId: invitation._id.toString(),
+            })
+          )
+      );
+    }
+
     return NextResponse.json({
       success: true,
-      message: "Successfully joined group",
+      message: wasAlreadyActive
+        ? "You are already a member of this group."
+        : "Successfully joined group.",
       groupId: invitation.groupId,
     });
   } catch (error: any) {

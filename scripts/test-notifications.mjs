@@ -2,51 +2,26 @@
  * Test script for Notifications & Nodemailer Email Flow
  */
 
-const BASE_URL = "http://localhost:3000";
-
-async function loginUser(email, name) {
-  const csrfRes = await fetch(`${BASE_URL}/api/auth/csrf`);
-  const csrfData = await csrfRes.json();
-  const csrfCookies = csrfRes.headers.getSetCookie();
-  const csrfHeader = csrfCookies.map((c) => c.split(";")[0]).join("; ");
-
-  const params = new URLSearchParams();
-  params.append("email", email);
-  params.append("name", name);
-  params.append("csrfToken", csrfData.csrfToken);
-
-  const loginRes = await fetch(`${BASE_URL}/api/auth/callback/dev-login`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Cookie: csrfHeader,
-    },
-    body: params,
-    redirect: "manual",
-  });
-
-  const loginCookies = loginRes.headers.getSetCookie();
-  return loginCookies.map((c) => c.split(";")[0]).join("; ");
-}
+import { BASE_URL, getTestUsers, registerAndLogin } from "./auth-test-helper.mjs";
 
 async function runNotificationTest() {
   console.log("==================================================");
   console.log("🔔 TESTING NOTIFICATIONS & NODEMAILER FLOW");
   console.log("==================================================\n");
 
-  // 1. Authenticate Rahul
-  console.log("👉 1. Login Rahul...");
-  const rahulCookie = await loginUser("rahul@demo.com", "Rahul Sharma");
+  const [user1, user2] = getTestUsers();
 
-  // 2. Authenticate Priyanshu
-  console.log("👉 2. Login Priyanshu...");
-  const priyanshuCookie = await loginUser("priyanshu@demo.com", "Priyanshu Verma");
+  // 1. Authenticate two real test accounts
+  console.log("👉 1. Sign in test user 1...");
+  const user1Cookie = await registerAndLogin(user1);
+  console.log("👉 2. Sign in test user 2...");
+  const user2Cookie = await registerAndLogin(user2);
 
-  // 3. Create Group as Rahul
-  console.log("👉 3. Rahul creates group 'Weekend Party'...");
+  // 3. Create a group as test user 1
+  console.log("👉 3. Test user 1 creates group 'Weekend Party'...");
   const grpRes = await fetch(`${BASE_URL}/api/groups`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Cookie: rahulCookie },
+    headers: { "Content-Type": "application/json", Cookie: user1Cookie },
     body: JSON.stringify({
       name: "Weekend Party",
       description: "Music & food",
@@ -57,20 +32,21 @@ async function runNotificationTest() {
   const groupId = grpData.group._id;
   console.log(`   Group created: ${grpData.group.name} (${groupId})\n`);
 
-  // 4. Rahul invites Priyanshu via email
-  console.log("👉 4. Rahul invites Priyanshu (priyanshu@demo.com)...");
+  // 4. Test user 1 invites test user 2 via email
+  console.log("👉 4. Test user 1 invites test user 2...");
   const inviteRes = await fetch(`${BASE_URL}/api/groups/${groupId}/invitations`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Cookie: rahulCookie },
-    body: JSON.stringify({ email: "priyanshu@demo.com" }),
+    headers: { "Content-Type": "application/json", Cookie: user1Cookie },
+    body: JSON.stringify({ email: user2.email }),
   });
   const inviteData = await inviteRes.json();
-  console.log(`   Invite sent! Token: ${inviteData.invitation.token}\n`);
+  if (!inviteRes.ok) throw new Error(inviteData.error || "Invite failed");
+  console.log(`   Invitation created. Email sent: ${inviteData.emailSent}\n`);
 
-  // 5. Check Priyanshu's In-App Notifications
-  console.log("👉 5. Checking Priyanshu's In-App Notifications...");
+  // 5. Check test user 2's in-app notifications
+  console.log("👉 5. Checking test user 2's in-app notifications...");
   const notifRes = await fetch(`${BASE_URL}/api/notifications`, {
-    headers: { Cookie: priyanshuCookie },
+    headers: { Cookie: user2Cookie },
   });
   const notifData = await notifRes.json();
   console.log(`   Unread Notifications count: ${notifData.unreadCount}`);
@@ -79,37 +55,55 @@ async function runNotificationTest() {
   }
   console.log("");
 
-  // 6. Priyanshu joins the group
-  console.log("👉 6. Priyanshu accepts invitation...");
-  await fetch(`${BASE_URL}/api/invitations/${inviteData.invitation.token}`, {
+  // 6. Test user 2 accepts the invitation
+  console.log("👉 6. Test user 2 accepts the invitation...");
+  const acceptRes = await fetch(`${BASE_URL}/api/invitations/${inviteData.invitation.token}`, {
     method: "POST",
-    headers: { Cookie: priyanshuCookie },
+    headers: { Cookie: user2Cookie },
   });
-  console.log("   Priyanshu joined group!\n");
+  if (!acceptRes.ok) {
+    const acceptData = await acceptRes.json();
+    throw new Error(acceptData.error || "Invitation acceptance failed");
+  }
+  console.log("   Test user 2 joined the group!\n");
 
-  // 7. Rahul adds expense: 'Barbeque & Snacks' = ₹1,200
-  console.log("👉 7. Rahul adds expense 'Barbeque & Snacks' (₹1,200)...");
-  const rahulProfile = await (await fetch(`${BASE_URL}/api/auth/session`, { headers: { Cookie: rahulCookie } })).json();
-  const priyanshuProfile = await (await fetch(`${BASE_URL}/api/auth/session`, { headers: { Cookie: priyanshuCookie } })).json();
+  // 7. Confirm the group admin was notified
+  const adminNotifications = await (
+    await fetch(`${BASE_URL}/api/notifications`, {
+      headers: { Cookie: user1Cookie },
+    })
+  ).json();
+  const acceptedNotification = adminNotifications.notifications?.find(
+    (notification) => notification.type === "INVITATION_ACCEPTED"
+  );
+  if (!acceptedNotification) {
+    throw new Error("The group admin did not receive an invitation-accepted notification.");
+  }
+  console.log("👉 7. Group admin received the invitation-accepted notification.\n");
+
+  // 8. Test user 1 adds an expense
+  console.log("👉 8. Test user 1 adds 'Barbeque & Snacks' (₹1,200)...");
+  const user1Profile = await (await fetch(`${BASE_URL}/api/auth/session`, { headers: { Cookie: user1Cookie } })).json();
+  const user2Profile = await (await fetch(`${BASE_URL}/api/auth/session`, { headers: { Cookie: user2Cookie } })).json();
 
   await fetch(`${BASE_URL}/api/groups/${groupId}/expenses`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Cookie: rahulCookie },
+    headers: { "Content-Type": "application/json", Cookie: user1Cookie },
     body: JSON.stringify({
       title: "Barbeque & Snacks",
       amountPaise: 120000,
       category: "Food & Dining",
-      paidBy: rahulProfile.user.id,
+      paidBy: user1Profile.user.id,
       date: new Date().toISOString(),
-      participantUserIds: [rahulProfile.user.id, priyanshuProfile.user.id],
+      participantUserIds: [user1Profile.user.id, user2Profile.user.id],
     }),
   });
   console.log("   Expense added!\n");
 
-  // 8. Re-check Priyanshu's Notifications (Should have expense notification)
-  console.log("👉 8. Priyanshu checks notifications after expense added...");
+  // 9. Re-check test user 2's notifications
+  console.log("👉 9. Test user 2 checks notifications after expense added...");
   const notifRes2 = await fetch(`${BASE_URL}/api/notifications`, {
-    headers: { Cookie: priyanshuCookie },
+    headers: { Cookie: user2Cookie },
   });
   const notifData2 = await notifRes2.json();
   console.log(`   Unread Notifications count: ${notifData2.unreadCount}`);
@@ -118,16 +112,15 @@ async function runNotificationTest() {
   }
   console.log("");
 
-  // 9. Mark all as read
-  console.log("👉 9. Priyanshu clicks 'Mark all read'...");
+  // 10. Mark all notifications as read
   await fetch(`${BASE_URL}/api/notifications`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json", Cookie: priyanshuCookie },
+    headers: { "Content-Type": "application/json", Cookie: user2Cookie },
     body: JSON.stringify({ all: true }),
   });
 
   const notifRes3 = await fetch(`${BASE_URL}/api/notifications`, {
-    headers: { Cookie: priyanshuCookie },
+    headers: { Cookie: user2Cookie },
   });
   const notifData3 = await notifRes3.json();
   console.log(`   Unread count now: ${notifData3.unreadCount}`);
