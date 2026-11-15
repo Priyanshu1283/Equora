@@ -13,6 +13,7 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { NotificationBell } from "@/components/layout/NotificationBell";
 import { getInitials } from "@/lib/utils";
 
 interface NavbarProps {
@@ -85,6 +86,8 @@ export function Navbar({ user, onOpenCreateGroup }: NavbarProps) {
               New Group
             </Button>
           )}
+
+          {user && <NotificationBell />}
 
           {user ? (
             <div className="flex items-center gap-3 pl-2 border-l border-slate-200">

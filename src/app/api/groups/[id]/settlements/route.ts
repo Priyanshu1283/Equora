@@ -3,7 +3,9 @@ import { getCurrentUser, requireGroupMember } from "@/lib/auth-helpers";
 import { connectToDatabase } from "@/lib/db/connect";
 import { Settlement } from "@/lib/models/Settlement";
 import { GroupMember } from "@/lib/models/GroupMember";
+import { Notification } from "@/lib/models/Notification";
 import { recordSettlementSchema } from "@/lib/validations";
+import { formatPaiseToINR } from "@/lib/utils";
 import mongoose from "mongoose";
 
 interface RouteParams {
@@ -89,9 +91,19 @@ export async function POST(req: Request, { params }: RouteParams) {
       status: "CONFIRMED",
     });
 
-    const populated = await Settlement.findById(settlement._id)
+    const populated: any = await Settlement.findById(settlement._id)
       .populate("paidBy", "name email image")
       .populate("paidTo", "name email image");
+
+    // Create in-app notification for the recipient
+    await Notification.create({
+      userId: new mongoose.Types.ObjectId(validatedData.paidTo),
+      title: "Payment Received",
+      message: `${populated.paidBy?.name || "A member"} settled ${formatPaiseToINR(validatedData.amountPaise)} with you.`,
+      type: "SETTLEMENT_RECORDED",
+      link: `/groups/${groupId}`,
+      isRead: false,
+    });
 
     return NextResponse.json(
       {

@@ -4,8 +4,10 @@ import { connectToDatabase } from "@/lib/db/connect";
 import { Expense } from "@/lib/models/Expense";
 import { ExpenseSplit } from "@/lib/models/ExpenseSplit";
 import { GroupMember } from "@/lib/models/GroupMember";
+import { Notification } from "@/lib/models/Notification";
 import { createExpenseSchema } from "@/lib/validations";
 import { calculateEqualSplit } from "@/lib/calculations/split";
+import { formatPaiseToINR } from "@/lib/utils";
 import mongoose from "mongoose";
 
 interface RouteParams {
@@ -145,6 +147,22 @@ export async function POST(req: Request, { params }: RouteParams) {
     }));
 
     await ExpenseSplit.insertMany(splitDocs);
+
+    // Create in-app notifications for other participants
+    const notifications = splits
+      .filter((s) => s.userId !== user.id)
+      .map((s) => ({
+        userId: new mongoose.Types.ObjectId(s.userId),
+        title: "New Shared Expense",
+        message: `${user.name || "A member"} added "${validatedData.title}" (${formatPaiseToINR(s.sharePaise)} your share).`,
+        type: "EXPENSE_ADDED",
+        link: `/groups/${groupId}`,
+        isRead: false,
+      }));
+
+    if (notifications.length > 0) {
+      await Notification.insertMany(notifications);
+    }
 
     return NextResponse.json(
       {

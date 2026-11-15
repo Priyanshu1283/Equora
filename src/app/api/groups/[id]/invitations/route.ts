@@ -3,8 +3,11 @@ import { getCurrentUser, requireGroupMember } from "@/lib/auth-helpers";
 import { connectToDatabase } from "@/lib/db/connect";
 import { Invitation } from "@/lib/models/Invitation";
 import { GroupMember } from "@/lib/models/GroupMember";
+import { Group } from "@/lib/models/Group";
 import { User } from "@/lib/models/User";
+import { Notification } from "@/lib/models/Notification";
 import { inviteMemberSchema } from "@/lib/validations";
+import { sendInvitationEmail } from "@/lib/email";
 import crypto from "crypto";
 import mongoose from "mongoose";
 
@@ -26,7 +29,9 @@ export async function GET(req: Request, { params }: RouteParams) {
     const invites = await Invitation.find({
       groupId: new mongoose.Types.ObjectId(groupId),
       status: "PENDING",
-    }).populate("invitedBy", "name email");
+    })
+      .populate("invitedBy", "name email")
+      .lean();
 
     return NextResponse.json({ invitations: invites });
   } catch (error: any) {
@@ -53,6 +58,10 @@ export async function POST(req: Request, { params }: RouteParams) {
     await requireGroupMember(groupId, user.id);
 
     const gid = new mongoose.Types.ObjectId(groupId);
+    const group = await Group.findById(gid).lean();
+    if (!group) {
+      return NextResponse.json({ error: "Group not found" }, { status: 404 });
+    }
 
     // Check if user is already a member
     const existingUser = await User.findOne({ email: normalizedEmail });
@@ -99,11 +108,38 @@ export async function POST(req: Request, { params }: RouteParams) {
       expiresAt,
     });
 
+    const origin =
+      req.headers.get("origin") ||
+      process.env.NEXTAUTH_URL ||
+      "http://localhost:3000";
+
+    const inviteLink = `${origin}/join?token=${token}`;
+
+    // 1. Send real email using Nodemailer
+    await sendInvitationEmail({
+      to: normalizedEmail,
+      groupName: group.name,
+      inviterName: user.name || "A friend",
+      inviteLink,
+    });
+
+    // 2. If user already has an account, also create an in-app Notification
+    if (existingUser) {
+      await Notification.create({
+        userId: existingUser._id,
+        title: "New Group Invitation",
+        message: `${user.name || "A friend"} invited you to join "${group.name}".`,
+        type: "INVITATION",
+        link: `/join?token=${token}`,
+        isRead: false,
+      });
+    }
+
     return NextResponse.json(
       {
         invitation,
         inviteLink: `/join?token=${token}`,
-        message: "Invitation generated successfully.",
+        message: "Invitation generated and email sent successfully.",
       },
       { status: 201 }
     );
