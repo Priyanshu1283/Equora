@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, Suspense } from "react";
+import React, { useEffect, useRef, useState, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { signOut } from "next-auth/react";
@@ -11,6 +11,7 @@ function JoinGroupContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const token = searchParams.get("token");
+  const shouldAutoAccept = searchParams.get("accept") === "1";
 
   const [invitation, setInvitation] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -18,6 +19,7 @@ function JoinGroupContent() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
   const [needsAccountSwitch, setNeedsAccountSwitch] = useState(false);
+  const autoAcceptAttempted = useRef<string | null>(null);
 
   useEffect(() => {
     if (!token) {
@@ -52,10 +54,11 @@ function JoinGroupContent() {
       const data = await res.json();
       if (!res.ok) {
         if (res.status === 401) {
-          const callbackUrl = `/join?token=${encodeURIComponent(token)}`;
+          const callbackUrl = `/join?token=${encodeURIComponent(token)}&accept=1`;
           const loginUrl = new URLSearchParams({
             callbackUrl,
             ...(invitation?.email ? { email: invitation.email } : {}),
+            mode: "register",
           });
           router.push(`/login?${loginUrl.toString()}`);
           return;
@@ -77,11 +80,25 @@ function JoinGroupContent() {
     }
   };
 
+  useEffect(() => {
+    if (
+      !shouldAutoAccept ||
+      !token ||
+      !invitation ||
+      autoAcceptAttempted.current === token
+    ) {
+      return;
+    }
+
+    autoAcceptAttempted.current = token;
+    void handleJoin();
+  }, [handleJoin, invitation, shouldAutoAccept, token]);
+
   const handleSwitchAccount = async () => {
     if (!token) return;
     setJoining(true);
     await signOut({ redirect: false });
-    const callbackUrl = `/join?token=${encodeURIComponent(token)}`;
+    const callbackUrl = `/join?token=${encodeURIComponent(token)}&accept=1`;
     const loginUrl = new URLSearchParams({
       callbackUrl,
       ...(invitation?.email ? { email: invitation.email } : {}),

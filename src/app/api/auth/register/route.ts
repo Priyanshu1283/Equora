@@ -4,6 +4,7 @@ import { connectToDatabase } from "@/lib/db/connect";
 import { User } from "@/lib/models/User";
 import { registerUserSchema } from "@/lib/validations";
 import { sendWelcomeEmail } from "@/lib/email";
+import { getAppBaseUrl } from "@/lib/app-url";
 
 export async function POST(request: Request) {
   let body: unknown;
@@ -57,16 +58,20 @@ export async function POST(request: Request) {
       await User.create({ name, email, passwordHash });
     }
 
-    // Send welcome email (fire-and-forget – don't block registration)
-    const origin = request.headers.get("origin") || process.env.NEXTAUTH_URL || "http://localhost:3000";
-    sendWelcomeEmail({
-      to: email,
-      name,
-      loginLink: `${origin}/dashboard`,
-    }).catch((err) => console.error("[Welcome email error]", err));
+    const appUrl = getAppBaseUrl(request.url);
+    let welcomeEmailSent = false;
+    try {
+      welcomeEmailSent = await sendWelcomeEmail({
+        to: email,
+        name,
+        loginLink: new URL("/dashboard", appUrl).toString(),
+      });
+    } catch (error) {
+      console.error("[Welcome email error]", error);
+    }
 
     return NextResponse.json(
-      { message: "Account created successfully." },
+      { message: "Account created successfully.", welcomeEmailSent },
       { status: 201 }
     );
   } catch (error) {

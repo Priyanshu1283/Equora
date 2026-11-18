@@ -6,20 +6,28 @@ import { useRouter } from "next/navigation";
 import { Wallet, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { useToast } from "@/components/ui/Toast";
 
 export default function LoginPage() {
   const router = useRouter();
+  const { showToast } = useToast();
   const [isRegistering, setIsRegistering] = useState(false);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [invitedEmail, setInvitedEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loadingUser, setLoadingUser] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [googleEnabled, setGoogleEnabled] = useState(false);
 
   useEffect(() => {
-    const invitedEmail = new URLSearchParams(window.location.search).get("email");
-    if (invitedEmail) setEmail(invitedEmail);
+    const params = new URLSearchParams(window.location.search);
+    const emailFromInvitation = params.get("email");
+    if (emailFromInvitation) {
+      setEmail(emailFromInvitation);
+      setInvitedEmail(emailFromInvitation);
+    }
+    if (params.get("mode") === "register") setIsRegistering(true);
 
     fetch("/api/auth/providers")
       .then((response) => response.json())
@@ -64,6 +72,14 @@ export default function LoginPage() {
         if (!response.ok) {
           setError(data.error || "Unable to create your account.");
           return;
+        }
+        if (data.welcomeEmailSent === false) {
+          showToast({
+            id: `welcome-email-${Date.now()}`,
+            title: "Account created",
+            message: "We couldn't send the welcome email. You can still continue to Equora.",
+            type: "EMAIL",
+          });
         }
       }
 
@@ -122,10 +138,12 @@ export default function LoginPage() {
             <Wallet className="h-6 w-6" />
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-            Sign in to Equora
+            {isRegistering ? "Create your Equora account" : "Sign in to Equora"}
           </h1>
           <p className="text-sm text-slate-500">
-            Manage shared expenses with roommates, trips, and friends effortlessly.
+            {invitedEmail
+              ? "Use the invited email to create your account and join the group."
+              : "Manage shared expenses with roommates, trips, and friends effortlessly."}
           </p>
         </div>
 
@@ -196,6 +214,12 @@ export default function LoginPage() {
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
                 maxLength={254}
+                disabled={Boolean(invitedEmail)}
+                helperText={
+                  invitedEmail
+                    ? "This invitation can only be accepted with the invited email."
+                    : undefined
+                }
                 required
               />
               <Input

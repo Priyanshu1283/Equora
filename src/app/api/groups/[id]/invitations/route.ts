@@ -8,6 +8,7 @@ import { User } from "@/lib/models/User";
 import { notificationService } from "@/lib/notification.service";
 import { inviteMemberSchema } from "@/lib/validations";
 import { sendInvitationEmail } from "@/lib/email";
+import { getAppBaseUrl } from "@/lib/app-url";
 import crypto from "crypto";
 import mongoose from "mongoose";
 
@@ -106,9 +107,10 @@ export async function POST(req: Request, { params }: RouteParams) {
       });
     }
 
+    const appUrl = getAppBaseUrl(req.url);
     const inviteLink = new URL(
       `/join?token=${invitation.token}`,
-      new URL(req.url).origin
+      appUrl
     ).toString();
 
     const emailSent = await sendInvitationEmail({
