@@ -4,6 +4,7 @@ import Credentials from "next-auth/providers/credentials";
 import { compare } from "bcryptjs";
 import { connectToDatabase } from "@/lib/db/connect";
 import { User } from "@/lib/models/User";
+import { sendWelcomeEmail } from "@/lib/email";
 
 declare module "next-auth" {
   interface Session {
@@ -80,6 +81,14 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
               image: user.image || "",
               defaultCurrency: "INR",
             });
+
+            // Send welcome email for new Google sign-ups (fire-and-forget)
+            const origin = process.env.NEXTAUTH_URL || "http://localhost:3000";
+            sendWelcomeEmail({
+              to: dbUser.email,
+              name: dbUser.name,
+              loginLink: `${origin}/dashboard`,
+            }).catch((err) => console.error("[Welcome email error]", err));
           }
           user.id = dbUser._id.toString();
           return true;

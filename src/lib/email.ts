@@ -1,5 +1,11 @@
 import nodemailer from "nodemailer";
 
+interface SendWelcomeEmailParams {
+  to: string;
+  name: string;
+  loginLink: string;
+}
+
 interface SendInviteEmailParams {
   to: string;
   groupName: string;
@@ -28,7 +34,7 @@ interface SendSettlementEmailParams {
 function getTransporter() {
   const host = process.env.SMTP_HOST;
   const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
+  const pass = process.env.SMTP_PASS?.replace(/\s/g, "");
   const port = parseInt(process.env.SMTP_PORT || "587", 10);
   const secure = process.env.SMTP_SECURE === "true" || port === 465;
 
@@ -207,6 +213,92 @@ export async function sendSettlementNotificationEmail({
     return true;
   } catch (err) {
     console.error("Failed to send settlement email:", err);
+    return false;
+  }
+}
+
+
+/**
+ * Sends a beautiful welcome email when a new user creates an account.
+ */
+export async function sendWelcomeEmail({
+  to,
+  name,
+  loginLink,
+}: SendWelcomeEmailParams): Promise<boolean> {
+  const transporter = getTransporter();
+  if (!transporter) {
+    console.warn("[Welcome email] SMTP is not configured; email was not sent.");
+    return false;
+  }
+
+  const safeName = escapeHtml(name);
+  const safeLink = escapeHtml(loginLink);
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <style>
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; margin: 0; padding: 24px; color: #0f172a; }
+          .card { background-color: #ffffff; max-width: 520px; margin: 0 auto; border-radius: 16px; border: 1px solid #e2e8f0; padding: 32px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
+          .brand { display: flex; align-items: center; gap: 8px; font-size: 20px; font-weight: 800; color: #0f172a; margin-bottom: 24px; }
+          h2 { font-size: 22px; margin-top: 0; margin-bottom: 12px; color: #0f172a; line-height: 1.3; }
+          p { font-size: 14px; line-height: 1.6; color: #475569; margin: 0 0 16px 0; }
+          .btn-container { text-align: center; margin: 28px 0; }
+          .btn { background-color: #0f172a; color: #ffffff !important; text-decoration: none; padding: 12px 28px; border-radius: 10px; font-weight: 600; font-size: 14px; display: inline-block; }
+          .features { background-color: #f8fafc; border-radius: 12px; padding: 20px; margin: 20px 0; }
+          .features ul { margin: 8px 0 0 0; padding-left: 20px; }
+          .features li { font-size: 13px; color: #475569; padding: 4px 0; }
+          .features li strong { color: #0f172a; }
+          .footer { margin-top: 32px; padding-top: 20px; border-top: 1px solid #f1f5f9; font-size: 12px; color: #94a3b8; text-align: center; }
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <div class="brand">⚖️ Equora</div>
+          <h2>Welcome to Equora, ${safeName}! 🎉</h2>
+          <p>
+            Your account has been created successfully. Equora makes managing shared expenses
+            with roommates, friends, and travel groups effortless and accurate.
+          </p>
+
+          <div class="features">
+            <p style="font-weight: 600; margin-bottom: 8px; color: #0f172a;">Here's what you can do:</p>
+            <ul>
+              <li><strong>Create Groups</strong> — Organize expenses by trips, homes, or events</li>
+              <li><strong>Add Expenses</strong> — Split costs equally with mathematical paise precision</li>
+              <li><strong>Track Balances</strong> — See who owes whom at a glance</li>
+              <li><strong>Settle Up</strong> — Record payments and clear debts</li>
+              <li><strong>Invite Friends</strong> — Share a link and they're in</li>
+            </ul>
+          </div>
+
+          <div class="btn-container">
+            <a href="${safeLink}" class="btn">Go to Equora →</a>
+          </div>
+
+          <div class="footer">
+            Equora – Group Expense Manager<br>
+            All amounts stored with integer paise precision. No rounding surprises.
+          </div>
+        </div>
+      </body>
+    </html>
+  `;
+
+  try {
+    await transporter.sendMail({
+      from: DEFAULT_FROM,
+      to,
+      subject: `Welcome to Equora, ${name}! 🎉`,
+      html: htmlContent,
+      text: `Welcome to Equora, ${name}! Start managing shared expenses at: ${loginLink}`,
+    });
+    console.log(`✅ [Nodemailer] Welcome email delivered to ${to}`);
+    return true;
+  } catch (error) {
+    console.error(`❌ [Nodemailer] Failed to send welcome email to ${to}:`, error);
     return false;
   }
 }

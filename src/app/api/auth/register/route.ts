@@ -3,6 +3,7 @@ import { hash } from "bcryptjs";
 import { connectToDatabase } from "@/lib/db/connect";
 import { User } from "@/lib/models/User";
 import { registerUserSchema } from "@/lib/validations";
+import { sendWelcomeEmail } from "@/lib/email";
 
 export async function POST(request: Request) {
   let body: unknown;
@@ -55,6 +56,14 @@ export async function POST(request: Request) {
       const passwordHash = await hash(password, 12);
       await User.create({ name, email, passwordHash });
     }
+
+    // Send welcome email (fire-and-forget – don't block registration)
+    const origin = request.headers.get("origin") || process.env.NEXTAUTH_URL || "http://localhost:3000";
+    sendWelcomeEmail({
+      to: email,
+      name,
+      loginLink: `${origin}/dashboard`,
+    }).catch((err) => console.error("[Welcome email error]", err));
 
     return NextResponse.json(
       { message: "Account created successfully." },
