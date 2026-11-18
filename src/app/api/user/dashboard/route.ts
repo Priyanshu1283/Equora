@@ -1,15 +1,21 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth-helpers";
 import { connectToDatabase } from "@/lib/db/connect";
+
+import "@/lib/models/Group";
+import "@/lib/models/User";
+
 import { GroupMember } from "@/lib/models/GroupMember";
 import { Expense } from "@/lib/models/Expense";
 import { ExpenseSplit } from "@/lib/models/ExpenseSplit";
 import { Settlement } from "@/lib/models/Settlement";
+
 import {
   calculateGroupBalances,
   type ExpenseRecord,
   type SettlementRecord,
 } from "@/lib/calculations/balance";
+
 import mongoose from "mongoose";
 
 export async function GET() {
